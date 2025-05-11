@@ -6,20 +6,14 @@ import tempfile
 import gradio as gr
 import time
 
-# Connect in GUI mode for 3D interactive view
-#p.connect(p.GUI)
 p.connect(p.DIRECT)
-
 p.setAdditionalSearchPath(pybullet_data.getDataPath())
 p.setGravity(0, 0, -9.8)
 p.loadURDF("plane.urdf")
 robot = p.loadURDF("franka_panda/panda.urdf", basePosition=[0, 0, 0], useFixedBase=True)
-
-# Add cube to pick
 cube_id = p.loadURDF("cube_small.urdf", basePosition=[0.6, 0, 0.02])
-p.changeVisualShape(cube_id, -1, rgbaColor=[0, 0, 0, 1])  # black cube
+p.changeVisualShape(cube_id, -1, rgbaColor=[0, 0, 0, 1])
 
-# Get joint indices
 def get_panda_joints(robot):
     arm, fingers = [], []
     for i in range(p.getNumJoints(robot)):
@@ -34,7 +28,6 @@ def get_panda_joints(robot):
 
 arm_joints, finger_joints = get_panda_joints(robot)
 
-# Add joint labels in sim
 debug_labels = []
 def add_joint_labels():
     global debug_labels
@@ -48,8 +41,7 @@ def add_joint_labels():
         text_id = p.addUserDebugText(lbl, pos, textColorRGB=[1, 0, 0], textSize=1.2)
         debug_labels.append(text_id)
 
-# Render PyBullet sim as image
-def render_sim(joint_values, gripper_val):
+def render_sim(joint_values, gripper_val, cam_xyz, target_xyz):
     for idx, tgt in zip(arm_joints, joint_values):
         p.setJointMotorControl2(robot, idx, p.POSITION_CONTROL, targetPosition=tgt)
     if len(finger_joints) == 2:
@@ -58,7 +50,7 @@ def render_sim(joint_values, gripper_val):
     for _ in range(10): p.stepSimulation()
     add_joint_labels()
     width, height = 1280, 1280
-    view_matrix = p.computeViewMatrix([1.5, 0, 1], [0, 0, 0.5], [0, 0, 1])
+    view_matrix = p.computeViewMatrix(cam_xyz, target_xyz, [0, 0, 1])
     proj_matrix = p.computeProjectionMatrixFOV(60, width / height, 0.1, 3.1)
     _, _, img, _, _ = p.getCameraImage(width, height, view_matrix, proj_matrix)
     rgb = np.reshape(img, (height, width, 4))[:, :, :3]
@@ -72,8 +64,7 @@ def render_sim(joint_values, gripper_val):
     joint_text += f"\nGripper = {gripper_val:.3f} m"
     return tmp.name, joint_text
 
-# Move robot to given angles smoothly
-def move_to_input_angles(joint_str):
+def move_to_input_angles(joint_str, cam_xyz, target_xyz):
     try:
         target_angles = [float(x.strip()) for x in joint_str.split(",")]
         if len(target_angles) != 7:
@@ -87,12 +78,11 @@ def move_to_input_angles(joint_str):
             p.stepSimulation()
             time.sleep(0.01)
         current_grip = p.getJointState(robot, finger_joints[0])[0]
-        return render_sim(target_angles, current_grip)
+        return render_sim(target_angles, current_grip, cam_xyz, target_xyz)
     except Exception as e:
         return None, f"Error: {str(e)}"
 
-# Pick and place
-def pick_and_place(position_str, approach_str, place_str):
+def pick_and_place(position_str, approach_str, place_str, cam_xyz, target_xyz):
     try:
         position_angles = [float(x.strip()) for x in position_str.split(",")]
         approach_angles = [float(x.strip()) for x in approach_str.split(",")]
@@ -101,7 +91,7 @@ def pick_and_place(position_str, approach_str, place_str):
         if len(position_angles) != 7 or len(approach_angles) != 7 or len(place_angles) != 7:
             return None, "❌ All inputs must have 7 joint angles."
 
-        move_to_input_angles(approach_str)
+        move_to_input_angles(approach_str, cam_xyz, target_xyz)
 
         for _ in range(30):
             for fj in finger_joints:
@@ -117,7 +107,7 @@ def pick_and_place(position_str, approach_str, place_str):
             p.stepSimulation()
             time.sleep(0.01)
 
-        move_to_input_angles(place_str)
+        move_to_input_angles(place_str, cam_xyz, target_xyz)
 
         for _ in range(30):
             for fj in finger_joints:
@@ -125,13 +115,12 @@ def pick_and_place(position_str, approach_str, place_str):
             p.stepSimulation()
             time.sleep(0.01)
 
-        return render_sim(place_angles, 0.04)
+        return render_sim(place_angles, 0.04, cam_xyz, target_xyz)
     except Exception as e:
         return None, f"Error: {str(e)}"
 
-# Gradio UI
-with gr.Blocks(title="Franka Arm Pick & Place") as demo:
-    gr.Markdown("## 🤖 Franka Panda Robot Control")
+with gr.Blocks(title="Franka Arm with 3D Camera Control") as demo:
+    gr.Markdown("## 🤖 Franka Robot with Camera Controls")
 
     joint_sliders = []
     with gr.Row():
@@ -142,41 +131,49 @@ with gr.Blocks(title="Franka Arm Pick & Place") as demo:
             joint_sliders.append(gr.Slider(-3.14, 3.14, value=0, label=f"Joint {i+1}"))
         gripper = gr.Slider(0.0, 0.04, value=0.02, step=0.001, label="Gripper")
 
+    gr.Markdown("### 🎥 Camera Controls")
+    cam_x = gr.Slider(-3, 3, value=1.5, label="Camera X")
+    cam_y = gr.Slider(-3, 3, value=0.0, label="Camera Y")
+    cam_z = gr.Slider(-1, 3, value=1.0, label="Camera Z")
+    tgt_x = gr.Slider(-1, 1, value=0.0, label="Target X")
+    tgt_y = gr.Slider(-1, 1, value=0.0, label="Target Y")
+    tgt_z = gr.Slider(0, 2, value=0.5, label="Target Z")
+
     with gr.Row():
         img_output = gr.Image(type="filepath", label="Simulation View")
         text_output = gr.Textbox(label="Joint States")
 
     def live_update(*vals):
-        joints = list(vals[:-1])
-        grip = vals[-1]
-        return render_sim(joints, grip)
+        joints = list(vals[:7])
+        grip = vals[7]
+        cam = [vals[8], vals[9], vals[10]]
+        tgt = [vals[11], vals[12], vals[13]]
+        return render_sim(joints, grip, cam, tgt)
 
-    for s in joint_sliders + [gripper]:
-        s.change(fn=live_update, inputs=joint_sliders + [gripper], outputs=[img_output, text_output])
+    sliders = joint_sliders + [gripper, cam_x, cam_y, cam_z, tgt_x, tgt_y, tgt_z]
+    for s in sliders:
+        s.change(fn=live_update, inputs=sliders, outputs=[img_output, text_output])
 
     gr.Button("🔄 Reset Robot").click(
-        fn=lambda: render_sim([0]*7, 0.02),
+        fn=lambda: render_sim([0]*7, 0.02, [1.5, 0, 1.0], [0, 0, 0.5]),
         inputs=[], outputs=[img_output, text_output]
     )
 
     gr.Markdown("### ✍️ Move Robot to Custom Joint Angles")
-    joint_input_box = gr.Textbox(
-        label="Enter 7 Joint Angles (comma-separated)",
-        placeholder="e.g. 0.0, -0.5, 0.3, -1.2, 0.0, 1.5, 0.8"
-    )
+    joint_input_box = gr.Textbox(label="Enter 7 Joint Angles (comma-separated)")
     gr.Button("▶️ Move to Angles").click(
-        fn=move_to_input_angles,
-        inputs=joint_input_box,
+        fn=lambda s, x, y, z, tx, ty, tz: move_to_input_angles(s, [x, y, z], [tx, ty, tz]),
+        inputs=[joint_input_box, cam_x, cam_y, cam_z, tgt_x, tgt_y, tgt_z],
         outputs=[img_output, text_output]
     )
 
     gr.Markdown("### 🧾 Pick and Place Input (3 sets of joint angles)")
-    position_input = gr.Textbox(label="Object Position Angles", placeholder="7 angles...")
-    approach_input = gr.Textbox(label="Approach Angles", placeholder="7 angles...")
-    place_input = gr.Textbox(label="Place Angles", placeholder="7 angles...")
+    position_input = gr.Textbox(label="Object Position Angles")
+    approach_input = gr.Textbox(label="Approach Angles")
+    place_input = gr.Textbox(label="Place Angles")
     gr.Button("🤖 Perform Pick and Place").click(
-        fn=pick_and_place,
-        inputs=[position_input, approach_input, place_input],
+        fn=lambda p, a, pl, x, y, z, tx, ty, tz: pick_and_place(p, a, pl, [x, y, z], [tx, ty, tz]),
+        inputs=[position_input, approach_input, place_input, cam_x, cam_y, cam_z, tgt_x, tgt_y, tgt_z],
         outputs=[img_output, text_output]
     )
 

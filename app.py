@@ -86,17 +86,24 @@ with gr.Blocks(title="Franka Arm Control with 7 DoF and Gripper Options") as dem
     gripper_feedback = gr.Textbox(label="Gripper Status", interactive=False)
     gripper_selector.change(fn=switch_gripper, inputs=gripper_selector, outputs=gripper_feedback)
 
-    # 7 DoF sliders
-    joint_sliders = [gr.Slider(-3.14, 3.14, value=0, label=f"Joint {i+1}") for i in range(7)]
-    gripper = gr.Slider(0.0, 0.04, value=0.02, step=0.001, label="Gripper Opening")
+    # 7 DoF sliders arranged in two rows
+    joint_sliders = []
+    with gr.Row():
+        for i in range(4):
+            joint_sliders.append(gr.Slider(-3.14, 3.14, value=0, label=f"Joint {i+1}"))
+    with gr.Row():
+        for i in range(4, 7):
+            joint_sliders.append(gr.Slider(-3.14, 3.14, value=0, label=f"Joint {i+1}"))
+        gripper = gr.Slider(0.0, 0.04, value=0.02, step=0.001, label="Gripper Opening")
 
+    # Outputs
     with gr.Row():
         img_output = gr.Image(type="filepath", label="Simulation View")
         text_output = gr.Textbox(label="Joint States")
 
-    # Update all joints
+    # Live update
     def live_update(*vals):
-        joints = list(vals[:-1])  # first 7 values
+        joints = list(vals[:-1])
         grip = vals[-1]
         return render_sim(joints, grip)
 
@@ -109,4 +116,3 @@ with gr.Blocks(title="Franka Arm Control with 7 DoF and Gripper Options") as dem
 
     gr.Button("🔄 Reset Robot").click(fn=reset, inputs=[], outputs=[img_output, text_output])
 
-demo.launch()

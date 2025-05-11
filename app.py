@@ -139,15 +139,16 @@ with gr.Blocks(title="Franka Arm with 3D Camera Control") as demo:
     # Compact camera + target controls
     with gr.Row():
         with gr.Column(scale=1):
-            gr.Markdown("<span style='font-size: 14px'><b>Camera Position</b></span>", unsafe_allow_html=True)
+            gr.Markdown("**Camera Position**", elem_id="camera-position-label")
             cam_x = gr.Slider(-3, 3, value=1.5, label="X")
             cam_y = gr.Slider(-3, 3, value=0.0, label="Y")
             cam_z = gr.Slider(-1, 3, value=1.0, label="Z")
         with gr.Column(scale=1):
-            gr.Markdown("<span style='font-size: 14px'><b>Target Point</b></span>", unsafe_allow_html=True)
+            gr.Markdown("**Target Point**", elem_id="target-point-label")
             tgt_x = gr.Slider(-1, 1, value=0.0, label="X")
             tgt_y = gr.Slider(-1, 1, value=0.0, label="Y")
             tgt_z = gr.Slider(0, 2, value=0.5, label="Z")
+
 
     # Live image + output
     with gr.Row():

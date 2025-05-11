@@ -10,7 +10,9 @@ physicsClient = p.connect(p.DIRECT)
 p.setAdditionalSearchPath(pybullet_data.getDataPath())
 p.setGravity(0, 0, -9.8)
 p.loadURDF("plane.urdf")
-robot = p.loadURDF("franka_panda/panda.urdf", basePosition=[0, 0, 0])
+
+# 🔒 Fix the base of the robot to the ground
+robot = p.loadURDF("franka_panda/panda.urdf", basePosition=[0, 0, 0], useFixedBase=True)
 
 def get_panda_joints(robot):
     revolute, finger = [], []
@@ -76,21 +78,18 @@ with gr.Blocks(title="Live Robot Control with Reset") as demo:
         img_output = gr.Image(type="filepath", label="Simulation View")
         text_output = gr.Textbox(label="Joint States")
 
-    # Update live
-    def live_update(j1, j2, j3, j4, gripper):
-        return render_sim([j1, j2, j3, j4], gripper)
+    # Live update function
+    def live_update(j1_val, j2_val, j3_val, j4_val, grip_val):
+        return render_sim([j1_val, j2_val, j3_val, j4_val], grip_val)
 
-    j1.change(live_update, inputs=[j1, j2, j3, j4, gripper], outputs=[img_output, text_output])
-    j2.change(live_update, inputs=[j1, j2, j3, j4, gripper], outputs=[img_output, text_output])
-    j3.change(live_update, inputs=[j1, j2, j3, j4, gripper], outputs=[img_output, text_output])
-    j4.change(live_update, inputs=[j1, j2, j3, j4, gripper], outputs=[img_output, text_output])
-    gripper.change(live_update, inputs=[j1, j2, j3, j4, gripper], outputs=[img_output, text_output])
+    # Connect sliders to live update
+    for slider in [j1, j2, j3, j4, gripper]:
+        slider.change(live_update, inputs=[j1, j2, j3, j4, gripper], outputs=[img_output, text_output])
 
     # Reset button
     def reset():
         return render_sim([0, 0, 0, 0], 0.02)
 
-    reset_btn = gr.Button("🔄 Reset Robot")
-    reset_btn.click(fn=reset, inputs=[], outputs=[img_output, text_output])
+    gr.Button("🔄 Reset Robot").click(fn=reset, inputs=[], outputs=[img_output, text_output])
 
 demo.launch()

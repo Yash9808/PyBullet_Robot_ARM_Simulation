@@ -6,14 +6,14 @@ import tempfile
 import gradio as gr
 import time
 
-# Initialize PyBullet
+# Setup PyBullet
 p.connect(p.DIRECT)
 p.setAdditionalSearchPath(pybullet_data.getDataPath())
 p.setGravity(0, 0, -9.8)
 p.loadURDF("plane.urdf")
 robot = p.loadURDF("franka_panda/panda.urdf", basePosition=[0, 0, 0], useFixedBase=True)
 
-# Add object (default: black cube)
+# Add a cube to pick (black color)
 cube_id = p.loadURDF("cube_small.urdf", basePosition=[0.6, 0, 0.02])
 p.changeVisualShape(cube_id, -1, rgbaColor=[0, 0, 0, 1])
 
@@ -32,134 +32,134 @@ def get_panda_joints(robot):
 
 arm_joints, finger_joints = get_panda_joints(robot)
 
+# Add 3D debug labels to joints
 def add_joint_labels():
     for i in range(len(arm_joints)):
         pos = p.getLinkState(robot, arm_joints[i])[0]
         p.addUserDebugText(f"J{i+1}", pos, textColorRGB=[1, 0, 0], textSize=1.2)
 
-# Camera config (yaw, pitch, dist)
-camera_angles = [45, -30, 1.5]  # Default values
-def render_sim(joint_values, gripper_val, cube_color):
+# Render simulation view
+def render_sim(joint_values, gripper_val):
     for idx, tgt in zip(arm_joints, joint_values):
         p.setJointMotorControl2(robot, idx, p.POSITION_CONTROL, targetPosition=tgt)
-
-    for _ in range(5):
+    if len(finger_joints) == 2:
         for fj in finger_joints:
             p.setJointMotorControl2(robot, fj, p.POSITION_CONTROL, targetPosition=gripper_val)
-        p.stepSimulation()
 
-    # Cube color update
-    p.changeVisualShape(cube_id, -1, rgbaColor=cube_color + [1])
+    for _ in range(10): p.stepSimulation()
+    
+    width, height = 640, 640
+    view_matrix = p.computeViewMatrix(cameraEyePosition=[1.5, 0, 1],
+                                      cameraTargetPosition=[0, 0, 0.5],
+                                      cameraUpVector=[0, 0, 1])
+    proj_matrix = p.computeProjectionMatrixFOV(fov=60, aspect=1.0, nearVal=0.1, farVal=3.1)
+    _, _, img, _, _ = p.getCameraImage(width, height, view_matrix, proj_matrix)
+    rgb = np.reshape(img, (height, width, 4))[:, :, :3]
 
-    # View camera
-    view_matrix = p.computeViewMatrixFromYawPitchRoll(
-        cameraTargetPosition=[0, 0, 0.5],
-        distance=camera_angles[2],
-        yaw=camera_angles[0],
-        pitch=camera_angles[1],
-        roll=0,
-        upAxisIndex=2,
-    )
-    proj_matrix = p.computeProjectionMatrixFOV(60, 1, 0.1, 3.1)
-    _, _, img, _, _ = p.getCameraImage(640, 640, view_matrix, proj_matrix)
-    rgb = np.reshape(img, (640, 640, 4))[:, :, :3]
-
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(figsize=(4, 4))
     ax.imshow(rgb.astype(np.uint8))
     ax.axis("off")
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
-    plt.savefig(tmp.name, bbox_inches='tight', dpi=150)
+    plt.savefig(tmp.name, bbox_inches='tight')
     plt.close()
 
-    return tmp.name, f"Joint Angles: {[round(j,2) for j in joint_values]}, Gripper: {round(gripper_val, 3)}"
+    joint_text = "Joint Angles:\n" + "\n".join([f"J{i+1} = {v:.2f} rad" for i, v in enumerate(joint_values)])
+    joint_text += f"\nGripper = {gripper_val:.3f} m"
+    return tmp.name, joint_text
 
+# Move smoothly to given joint angles
 def move_to_input_angles(joint_str):
     try:
         target_angles = [float(x.strip()) for x in joint_str.split(",")]
         if len(target_angles) != 7:
-            return None, "❌ Please enter exactly 7 joint angles."
-
+            return None, "❌ Enter exactly 7 joint angles."
         current = [p.getJointState(robot, idx)[0] for idx in arm_joints]
-        for i in range(50):
-            blend = [(1 - i/50) * c + (i/50) * t for c, t in zip(current, target_angles)]
+        steps = 100
+        for i in range(steps):
+            blend = [(1 - i/steps) * c + (i/steps) * t for c, t in zip(current, target_angles)]
             for idx, val in zip(arm_joints, blend):
                 p.setJointMotorControl2(robot, idx, p.POSITION_CONTROL, targetPosition=val)
             p.stepSimulation()
-            time.sleep(0.005)
-
-        grip = p.getJointState(robot, finger_joints[0])[0]
-        return render_sim(target_angles, grip, current_cube_color)
+            time.sleep(0.01)
+        current_grip = p.getJointState(robot, finger_joints[0])[0]
+        return render_sim(target_angles, current_grip)
     except Exception as e:
-        return None, str(e)
+        return None, f"❌ Error: {str(e)}"
 
-# Pick and place
-current_cube_color = [0, 0, 0]  # Default black
-
+# Pick and Place with validation
 def pick_and_place(position_str, approach_str, place_str):
-    position = [float(x) for x in position_str.split(",")]
-    approach = [float(x) for x in approach_str.split(",")]
-    place = [float(x) for x in place_str.split(",")]
+    try:
+        if not position_str or not approach_str or not place_str:
+            return None, "❌ Fill in all three joint angle sets."
 
-    move_to_input_angles(','.join(map(str, approach)))
+        position = [float(x) for x in position_str.split(",")]
+        approach = [float(x) for x in approach_str.split(",")]
+        place = [float(x) for x in place_str.split(",")]
 
-    for _ in range(30):
-        for fj in finger_joints:
-            p.setJointMotorControl2(robot, fj, p.POSITION_CONTROL, targetPosition=0.0)
-        p.stepSimulation()
-        time.sleep(0.01)
+        if not all(len(lst) == 7 for lst in [position, approach, place]):
+            return None, "❌ Each input must have 7 values."
 
-    move_to_input_angles(','.join([str(x + 0.1) for x in approach]))
-    move_to_input_angles(','.join(map(str, place)))
+        move_to_input_angles(",".join(map(str, approach)))
 
-    for _ in range(30):
-        for fj in finger_joints:
-            p.setJointMotorControl2(robot, fj, p.POSITION_CONTROL, targetPosition=0.04)
-        p.stepSimulation()
-        time.sleep(0.01)
+        for _ in range(50):
+            for fj in finger_joints:
+                p.setJointMotorControl2(robot, fj, p.POSITION_CONTROL, targetPosition=0.0)
+            p.stepSimulation()
+            time.sleep(0.01)
 
-    return render_sim(place, 0.04, current_cube_color)
+        lifted = [x + 0.1 for x in approach]
+        move_to_input_angles(",".join(map(str, lifted)))
 
-# UI
-with gr.Blocks(title="Franka Arm Control with Pick & Place") as demo:
-    gr.Markdown("# 🤖 Franka 7-DOF + Pick & Place")
+        move_to_input_angles(",".join(map(str, place)))
 
-    # Camera controls
-    yaw = gr.Slider(-180, 180, value=camera_angles[0], label="Yaw")
-    pitch = gr.Slider(-90, 90, value=camera_angles[1], label="Pitch")
-    dist = gr.Slider(0.5, 3.0, value=camera_angles[2], label="Camera Distance")
+        for _ in range(50):
+            for fj in finger_joints:
+                p.setJointMotorControl2(robot, fj, p.POSITION_CONTROL, targetPosition=0.04)
+            p.stepSimulation()
+            time.sleep(0.01)
 
-    def update_camera(y, p_, d):
-        camera_angles[0], camera_angles[1], camera_angles[2] = y, p_, d
-        return "Camera updated"
+        return render_sim(place, 0.04)
 
-    gr.Button("🎥 Update Camera").click(update_camera, [yaw, pitch, dist], outputs=gr.Textbox(label="Status"))
+    except ValueError:
+        return None, "❌ Invalid format. Use comma-separated numbers."
+    except Exception as e:
+        return None, f"❌ Error: {str(e)}"
 
-    # Cube color
-    cube_color_picker = gr.ColorPicker(label="Pick Cube Color", value="#000000")
+# Gradio UI
+def build_ui():
+    with gr.Blocks(title="Franka Pick & Place") as demo:
+        gr.Markdown("## 🤖 Franka 7-DOF Pick & Place Arm")
 
-    def update_color(color_hex):
-        global current_cube_color
-        rgb = tuple(int(color_hex[i:i+2], 16)/255. for i in (1, 3, 5))
-        current_cube_color = list(rgb)
-        return f"Updated color to {rgb}"
+        joint_sliders = [gr.Slider(-3.14, 3.14, value=0, label=f"Joint {i+1}") for i in range(7)]
+        gripper_slider = gr.Slider(0.0, 0.04, value=0.02, step=0.001, label="Gripper Opening")
 
-    cube_color_picker.change(fn=update_color, inputs=cube_color_picker, outputs=gr.Textbox(label="Color Info"))
+        img_output = gr.Image(type="filepath", label="Simulation View")
+        text_output = gr.Textbox(label="Joint Info")
 
-    # Manual joints + gripper
-    joint_sliders = [gr.Slider(-3.14, 3.14, value=0, label=f"Joint {i+1}") for i in range(7)]
-    gripper = gr.Slider(0.0, 0.04, value=0.02, step=0.001, label="Gripper")
+        def live_update(*vals):
+            return render_sim(list(vals[:-1]), vals[-1])
 
-    def live_update(*vals):
-        return render_sim(list(vals[:-1]), vals[-1], current_cube_color)
+        for s in joint_sliders + [gripper_slider]:
+            s.change(fn=live_update, inputs=joint_sliders + [gripper_slider], outputs=[img_output, text_output])
 
-    for s in joint_sliders + [gripper]:
-        s.change(fn=live_update, inputs=joint_sliders + [gripper], outputs=[gr.Image(type="filepath"), gr.Textbox()])
+        gr.Button("🔄 Reset").click(lambda: render_sim([0]*7, 0.02), outputs=[img_output, text_output])
 
-    # Pick and Place Inputs
-    gr.Markdown("## 🧠 Pick & Place Inputs")
-    pos_box = gr.Textbox(label="Position Angles")
-    approach_box = gr.Textbox(label="Approach Angles")
-    place_box = gr.Textbox(label="Place Angles")
-    gr.Button("🚚 Run Pick & Place").click(pick_and_place, [pos_box, approach_box, place_box], outputs=[gr.Image(type="filepath"), gr.Textbox()])
+        gr.Markdown("### 🎯 Move to Joint Angles")
+        joint_input = gr.Textbox(label="Joint Angles (7 values)", placeholder="e.g. 0.1, -0.5, 0.3, -1.0, 0.0, 1.5, 0.8")
+        gr.Button("▶️ Move").click(fn=move_to_input_angles, inputs=joint_input, outputs=[img_output, text_output])
 
-demo.launch(debug=True)
+        gr.Markdown("### 📦 Pick and Place")
+        position_input = gr.Textbox(label="Position Angles (7 values)")
+        approach_input = gr.Textbox(label="Approach Angles (7 values)")
+        place_input = gr.Textbox(label="Place Angles (7 values)")
+        gr.Button("🤖 Execute Pick & Place").click(
+            fn=pick_and_place,
+            inputs=[position_input, approach_input, place_input],
+            outputs=[img_output, text_output]
+        )
+
+    return demo
+
+if __name__ == '__main__':
+    demo = build_ui()
+    demo.launch(debug=True)

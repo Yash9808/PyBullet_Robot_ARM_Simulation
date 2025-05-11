@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import tempfile
 import gradio as gr
+import time
 
 # Setup PyBullet
 p.connect(p.DIRECT)
@@ -11,6 +12,9 @@ p.setAdditionalSearchPath(pybullet_data.getDataPath())
 p.setGravity(0, 0, -9.8)
 p.loadURDF("plane.urdf")
 robot = p.loadURDF("franka_panda/panda.urdf", basePosition=[0, 0, 0], useFixedBase=True)
+
+# Add a cube to pick
+cube_id = p.loadURDF("cube_small.urdf", basePosition=[0.6, 0, 0.02])
 
 # Get joint indices
 def get_panda_joints(robot):
@@ -77,6 +81,32 @@ def render_sim(joint_values, gripper_val):
     joint_text += f"\nGripper = {gripper_val:.3f} m"
     return tmp.name, joint_text
 
+# Pick and place motion
+def pick_and_place():
+    pre_grasp = [0, -0.5, 0, -2.0, 0, 1.5, 0.8]
+    grasp =     [0, -0.5, 0, -2.1, 0, 1.7, 0.8]
+    lift =      [0, -0.3, 0, -1.5, 0, 1.3, 0.6]
+    place =     [0.5, -0.4, 0.2, -1.8, 0, 1.4, 0.6]
+
+    sequence = [
+        (pre_grasp, 0.04),
+        (grasp, 0.0),     # Close gripper
+        (lift, 0.0),
+        (place, 0.0),
+        (place, 0.04)     # Open gripper
+    ]
+
+    for joints, grip in sequence:
+        for _ in range(50):
+            for idx, val in zip(arm_joints, joints):
+                p.setJointMotorControl2(robot, idx, p.POSITION_CONTROL, targetPosition=val)
+            for fj in finger_joints:
+                p.setJointMotorControl2(robot, fj, p.POSITION_CONTROL, targetPosition=grip)
+            p.stepSimulation()
+            time.sleep(0.01)
+
+    return render_sim(sequence[-1][0], sequence[-1][1])
+
 # Load gripper type (placeholder logic)
 def switch_gripper(gripper_type):
     print(f"Switching to gripper: {gripper_type}")
@@ -120,5 +150,8 @@ with gr.Blocks(title="Franka Arm Control with 7 DoF and Gripper Options") as dem
         return render_sim([0]*7, 0.02)
 
     gr.Button("🔄 Reset Robot").click(fn=reset, inputs=[], outputs=[img_output, text_output])
+
+    # Pick and Place Button
+    gr.Button("🤖 Pick and Place").click(fn=pick_and_place, inputs=[], outputs=[img_output, text_output])
 
 demo.launch(debug=True)

@@ -13,8 +13,9 @@ p.setGravity(0, 0, -9.8)
 p.loadURDF("plane.urdf")
 robot = p.loadURDF("franka_panda/panda.urdf", basePosition=[0, 0, 0], useFixedBase=True)
 
-# Add a cube to pick
+# Add a cube to pick (black color)
 cube_id = p.loadURDF("cube_small.urdf", basePosition=[0.6, 0, 0.02])
+p.changeVisualShape(cube_id, -1, rgbaColor=[0, 0, 0, 1])  # Change the cube color to black
 
 # Get joint indices
 def get_panda_joints(robot):
@@ -62,9 +63,7 @@ def render_sim(joint_values, gripper_val):
     add_joint_labels()
 
     # Camera
-    width, height = 1280, 1280  # or even 1280x1280
-
-    #width, height = 512, 512
+    width, height = 1280, 1280  # Increased resolution for clarity
     view_matrix = p.computeViewMatrix([1.5, 0, 1], [0, 0, 0.5], [0, 0, 1])
     proj_matrix = p.computeProjectionMatrixFOV(60, width / height, 0.1, 3.1)
     _, _, img, _, _ = p.getCameraImage(width, height, view_matrix, proj_matrix)
@@ -75,7 +74,7 @@ def render_sim(joint_values, gripper_val):
     ax.imshow(rgb.astype(np.uint8))
     ax.axis("off")
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
-    plt.savefig(tmp.name, bbox_inches='tight')
+    plt.savefig(tmp.name, bbox_inches='tight', dpi=200)  # Increased DPI for sharper image
     plt.close()
 
     # Text output
@@ -106,31 +105,37 @@ def move_to_input_angles(joint_str):
     except Exception as e:
         return None, f"Error: {str(e)}"
 
-# Pick and place motion
-def pick_and_place():
-    pre_grasp = [0, -0.5, 0, -2.0, 0, 1.5, 0.8]
-    grasp =     [0, -0.5, 0, -2.1, 0, 1.7, 0.8]
-    lift =      [0, -0.3, 0, -1.5, 0, 1.3, 0.6]
-    place =     [0.5, -0.4, 0.2, -1.8, 0, 1.4, 0.6]
+# Pick and place motion with user input
+def pick_and_place(position_angles, approach_angles, place_angles):
+    # Parse the angles from user input
+    position_angles = [float(x.strip()) for x in position_angles.split(",")]
+    approach_angles = [float(x.strip()) for x in approach_angles.split(",")]
+    place_angles = [float(x.strip()) for x in place_angles.split(",")]
 
-    sequence = [
-        (pre_grasp, 0.04),
-        (grasp, 0.0),     # Close gripper
-        (lift, 0.0),
-        (place, 0.0),
-        (place, 0.04)     # Open gripper
-    ]
+    # Move towards the position
+    move_to_input_angles(approach_angles)
 
-    for joints, grip in sequence:
-        for _ in range(50):
-            for idx, val in zip(arm_joints, joints):
-                p.setJointMotorControl2(robot, idx, p.POSITION_CONTROL, targetPosition=val)
-            for fj in finger_joints:
-                p.setJointMotorControl2(robot, fj, p.POSITION_CONTROL, targetPosition=grip)
-            p.stepSimulation()
-            time.sleep(0.01)
+    # Close gripper to pick
+    for _ in range(50):
+        for fj in finger_joints:
+            p.setJointMotorControl2(robot, fj, p.POSITION_CONTROL, targetPosition=0.0)
+        p.stepSimulation()
+        time.sleep(0.01)
 
-    return render_sim(sequence[-1][0], sequence[-1][1])
+    # Lift the object
+    move_to_input_angles([x + 0.1 for x in approach_angles])  # Example lift motion
+
+    # Move to the place position
+    move_to_input_angles(place_angles)
+
+    # Open gripper to place
+    for _ in range(50):
+        for fj in finger_joints:
+            p.setJointMotorControl2(robot, fj, p.POSITION_CONTROL, targetPosition=0.04)  # Open gripper
+        p.stepSimulation()
+        time.sleep(0.01)
+
+    return render_sim(place_angles, 0.04)  # Final joint angles after placement
 
 # Load gripper type (placeholder logic)
 def switch_gripper(gripper_type):
@@ -176,12 +181,11 @@ with gr.Blocks(title="Franka Arm Control with 7 DoF and Gripper Options") as dem
 
     gr.Button("🔄 Reset Robot").click(fn=reset, inputs=[], outputs=[img_output, text_output])
 
-    # Pick and Place Button
-    gr.Button("🤖 Pick and Place").click(fn=pick_and_place, inputs=[], outputs=[img_output, text_output])
-
-    # Joint angle input box
-    gr.Markdown("### 🧾 Enter Joint Angles (comma-separated)")
-    joint_input = gr.Textbox(label="Joint Angles (7 values in radians)", placeholder="e.g. 0.0, -0.5, 0.3, -1.2, 0.0, 1.5, 0.8")
-    gr.Button("▶️ Move to Angles").click(fn=move_to_input_angles, inputs=joint_input, outputs=[img_output, text_output])
+    # Pick and Place Inputs
+    gr.Markdown("### 🧾 Enter Joint Angles for Pick and Place")
+    position_input = gr.Textbox(label="Position Angles (7 values in radians)", placeholder="e.g. 0.0, -0.5, 0.3, -1.2, 0.0, 1.5, 0.8")
+    approach_input = gr.Textbox(label="Approach Angles (7 values in radians)", placeholder="e.g. 0.0, -0.3, 0.3, -1.5, 0.0, 1.0, 0.6")
+    place_input = gr.Textbox(label="Place Angles (7 values in radians)", placeholder="e.g. 0.5, -0.4, 0.2, -1.8, 0.0, 1.4, 0.6")
+    gr.Button("🤖 Perform Pick and Place").click(fn=pick_and_place, inputs=[position_input, approach_input, place_input], outputs=[img_output, text_output])
 
 demo.launch(debug=True)

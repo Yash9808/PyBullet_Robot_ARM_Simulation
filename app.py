@@ -13,7 +13,7 @@ p.setGravity(0, 0, -9.8)
 p.loadURDF("plane.urdf")
 robot = p.loadURDF("franka_panda/panda.urdf", basePosition=[0, 0, 0], useFixedBase=True)
 
-# Add a cube to pick (black color)
+# Add a cube to pick (black color by default)
 cube_id = p.loadURDF("cube_small.urdf", basePosition=[0.6, 0, 0.02])
 p.changeVisualShape(cube_id, -1, rgbaColor=[0, 0, 0, 1])  # Change the cube color to black
 
@@ -46,8 +46,20 @@ def add_joint_labels():
         text_id = p.addUserDebugText(lbl, pos, textColorRGB=[1, 0, 0], textSize=1.2)
         debug_labels.append(text_id)
 
+# Change cube color dynamically
+def change_cube_color(color):
+    color_map = {
+        "Black": [0, 0, 0, 1],
+        "Red": [1, 0, 0, 1],
+        "Green": [0, 1, 0, 1],
+        "Blue": [0, 0, 1, 1],
+        "Yellow": [1, 1, 0, 1],
+        "White": [1, 1, 1, 1]
+    }
+    p.changeVisualShape(cube_id, -1, rgbaColor=color_map[color])
+
 # Render image and info
-def render_sim(joint_values, gripper_val):
+def render_sim(joint_values, gripper_val, camera_angles):
     # Apply joint controls
     for idx, tgt in zip(arm_joints, joint_values):
         p.setJointMotorControl2(robot, idx, p.POSITION_CONTROL, targetPosition=tgt)
@@ -62,9 +74,9 @@ def render_sim(joint_values, gripper_val):
     # Refresh joint labels
     add_joint_labels()
 
-    # Camera
+    # Camera view
     width, height = 1280, 1280  # Increased resolution for clarity
-    view_matrix = p.computeViewMatrix([1.5, 0, 1], [0, 0, 0.5], [0, 0, 1])
+    view_matrix = p.computeViewMatrixFromYawPitchRoll(camera_angles[0], camera_angles[1], camera_angles[2], [1.5, 0, 1], [0, 0, 0.5], [0, 0, 1])
     proj_matrix = p.computeProjectionMatrixFOV(60, width / height, 0.1, 3.1)
     _, _, img, _, _ = p.getCameraImage(width, height, view_matrix, proj_matrix)
     rgb = np.reshape(img, (height, width, 4))[:, :, :3]
@@ -100,44 +112,12 @@ def move_to_input_angles(joint_str):
             time.sleep(0.01)
 
         current_grip = p.getJointState(robot, finger_joints[0])[0]
-        return render_sim(target_angles, current_grip)
+        return render_sim(target_angles, current_grip, [0, 0, 0])
 
     except Exception as e:
         return None, f"Error: {str(e)}"
 
-# Pick and place motion with user input
-def pick_and_place(position_angles, approach_angles, place_angles):
-    # Parse the angles from user input
-    position_angles = [float(x.strip()) for x in position_angles.split(",")]
-    approach_angles = [float(x.strip()) for x in approach_angles.split(",")]
-    place_angles = [float(x.strip()) for x in place_angles.split(",")]
-
-    # Move towards the position
-    move_to_input_angles(approach_angles)
-
-    # Close gripper to pick
-    for _ in range(50):
-        for fj in finger_joints:
-            p.setJointMotorControl2(robot, fj, p.POSITION_CONTROL, targetPosition=0.0)
-        p.stepSimulation()
-        time.sleep(0.01)
-
-    # Lift the object
-    move_to_input_angles([x + 0.1 for x in approach_angles])  # Example lift motion
-
-    # Move to the place position
-    move_to_input_angles(place_angles)
-
-    # Open gripper to place
-    for _ in range(50):
-        for fj in finger_joints:
-            p.setJointMotorControl2(robot, fj, p.POSITION_CONTROL, targetPosition=0.04)  # Open gripper
-        p.stepSimulation()
-        time.sleep(0.01)
-
-    return render_sim(place_angles, 0.04)  # Final joint angles after placement
-
-# Load gripper type (placeholder logic)
+# Gripper control
 def switch_gripper(gripper_type):
     print(f"Switching to gripper: {gripper_type}")
     return f"Switched to: {gripper_type}"
@@ -151,6 +131,10 @@ with gr.Blocks(title="Franka Arm Control with 7 DoF and Gripper Options") as dem
     gripper_feedback = gr.Textbox(label="Gripper Status", interactive=False)
     gripper_selector.change(fn=switch_gripper, inputs=gripper_selector, outputs=gripper_feedback)
 
+    # Multi-color option for the cube
+    color_selector = gr.Dropdown(["Black", "Red", "Green", "Blue", "Yellow", "White"], value="Black", label="Select Cube Color")
+    color_selector.change(fn=change_cube_color, inputs=color_selector, outputs=[])
+
     # 7 DoF sliders arranged in two rows
     joint_sliders = []
     with gr.Row():
@@ -161,6 +145,12 @@ with gr.Blocks(title="Franka Arm Control with 7 DoF and Gripper Options") as dem
             joint_sliders.append(gr.Slider(-3.14, 3.14, value=0, label=f"Joint {i+1}"))
         gripper = gr.Slider(0.0, 0.04, value=0.02, step=0.001, label="Gripper Opening")
 
+    # Camera rotation sliders (for 3D view movement)
+    with gr.Row():
+        camera_yaw = gr.Slider(-180, 180, value=0, label="Camera Yaw")
+        camera_pitch = gr.Slider(-90, 90, value=0, label="Camera Pitch")
+        camera_roll = gr.Slider(-180, 180, value=0, label="Camera Roll")
+
     # Outputs
     with gr.Row():
         img_output = gr.Image(type="filepath", label="Simulation View")
@@ -170,14 +160,15 @@ with gr.Blocks(title="Franka Arm Control with 7 DoF and Gripper Options") as dem
     def live_update(*vals):
         joints = list(vals[:-1])
         grip = vals[-1]
-        return render_sim(joints, grip)
+        camera_angles = [camera_yaw.value, camera_pitch.value, camera_roll.value]
+        return render_sim(joints, grip, camera_angles)
 
-    for s in joint_sliders + [gripper]:
-        s.change(fn=live_update, inputs=joint_sliders + [gripper], outputs=[img_output, text_output])
+    for s in joint_sliders + [gripper, camera_yaw, camera_pitch, camera_roll]:
+        s.change(fn=live_update, inputs=joint_sliders + [gripper, camera_yaw, camera_pitch, camera_roll], outputs=[img_output, text_output])
 
     # Reset button
     def reset():
-        return render_sim([0]*7, 0.02)
+        return render_sim([0]*7, 0.02, [0, 0, 0])
 
     gr.Button("🔄 Reset Robot").click(fn=reset, inputs=[], outputs=[img_output, text_output])
 
@@ -185,12 +176,5 @@ with gr.Blocks(title="Franka Arm Control with 7 DoF and Gripper Options") as dem
     gr.Markdown("### 🧾 Enter Joint Angles (comma-separated)")
     joint_input = gr.Textbox(label="Joint Angles (7 values in radians)", placeholder="e.g. 0.0, -0.5, 0.3, -1.2, 0.0, 1.5, 0.8")
     gr.Button("▶️ Move to Angles").click(fn=move_to_input_angles, inputs=joint_input, outputs=[img_output, text_output])
-
-    # Pick and Place Inputs
-    gr.Markdown("### 🧾 Enter Joint Angles for Pick and Place")
-    position_input = gr.Textbox(label="Position Angles (7 values in radians)", placeholder="e.g. 0.0, -0.5, 0.3, -1.2, 0.0, 1.5, 0.8")
-    approach_input = gr.Textbox(label="Approach Angles (7 values in radians)", placeholder="e.g. 0.0, -0.3, 0.3, -1.5, 0.0, 1.0, 0.6")
-    place_input = gr.Textbox(label="Place Angles (7 values in radians)", placeholder="e.g. 0.5, -0.4, 0.2, -1.8, 0.0, 1.4, 0.6")
-    gr.Button("🤖 Perform Pick and Place").click(fn=pick_and_place, inputs=[position_input, approach_input, place_input], outputs=[img_output, text_output])
 
 demo.launch(debug=True)

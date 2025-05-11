@@ -62,7 +62,7 @@ def render_sim(joint_values, gripper_val):
     add_joint_labels()
 
     # Camera
-    width, height = 1024, 1024  # or even 1280x1280
+    width, height = 1280, 1280  # or even 1280x1280
 
     #width, height = 512, 512
     view_matrix = p.computeViewMatrix([1.5, 0, 1], [0, 0, 0.5], [0, 0, 1])

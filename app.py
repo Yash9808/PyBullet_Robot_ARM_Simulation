@@ -7,7 +7,9 @@ import gradio as gr
 import time
 
 # Connect in GUI mode for 3D interactive view
-p.connect(p.GUI)
+#p.connect(p.GUI)
+p.connect(p.DIRECT)
+
 p.setAdditionalSearchPath(pybullet_data.getDataPath())
 p.setGravity(0, 0, -9.8)
 p.loadURDF("plane.urdf")

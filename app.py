@@ -6,16 +6,16 @@ import tempfile
 import gradio as gr
 import time
 
-# Setup PyBullet
-p.connect(p.DIRECT)
+# Connect in GUI mode for 3D interactive view
+p.connect(p.GUI)
 p.setAdditionalSearchPath(pybullet_data.getDataPath())
 p.setGravity(0, 0, -9.8)
 p.loadURDF("plane.urdf")
 robot = p.loadURDF("franka_panda/panda.urdf", basePosition=[0, 0, 0], useFixedBase=True)
 
-# Add a cube to pick (black color)
+# Add cube to pick
 cube_id = p.loadURDF("cube_small.urdf", basePosition=[0.6, 0, 0.02])
-p.changeVisualShape(cube_id, -1, rgbaColor=[0, 0, 0, 1])  # black
+p.changeVisualShape(cube_id, -1, rgbaColor=[0, 0, 0, 1])  # black cube
 
 # Get joint indices
 def get_panda_joints(robot):
@@ -32,7 +32,7 @@ def get_panda_joints(robot):
 
 arm_joints, finger_joints = get_panda_joints(robot)
 
-# Add debug labels
+# Add joint labels in sim
 debug_labels = []
 def add_joint_labels():
     global debug_labels
@@ -46,7 +46,7 @@ def add_joint_labels():
         text_id = p.addUserDebugText(lbl, pos, textColorRGB=[1, 0, 0], textSize=1.2)
         debug_labels.append(text_id)
 
-# Render simulation image
+# Render PyBullet sim as image
 def render_sim(joint_values, gripper_val):
     for idx, tgt in zip(arm_joints, joint_values):
         p.setJointMotorControl2(robot, idx, p.POSITION_CONTROL, targetPosition=tgt)
@@ -89,61 +89,47 @@ def move_to_input_angles(joint_str):
     except Exception as e:
         return None, f"Error: {str(e)}"
 
-# Auto Pick and Place using IK
-def pick_and_place_auto(px, py, pz):
+# Pick and place
+def pick_and_place(position_str, approach_str, place_str):
     try:
-        obj_pos, _ = p.getBasePositionAndOrientation(cube_id)
-        above_obj = list(obj_pos)
-        above_obj[2] += 0.1
+        position_angles = [float(x.strip()) for x in position_str.split(",")]
+        approach_angles = [float(x.strip()) for x in approach_str.split(",")]
+        place_angles = [float(x.strip()) for x in place_str.split(",")]
 
-        # Move above object
-        ik_approach = p.calculateInverseKinematics(robot, 11, above_obj)
-        move_to_input_angles(",".join([f"{a:.4f}" for a in ik_approach[:7]]))
+        if len(position_angles) != 7 or len(approach_angles) != 7 or len(place_angles) != 7:
+            return None, "❌ All inputs must have 7 joint angles."
 
-        # Move to grasp position
-        ik_grasp = p.calculateInverseKinematics(robot, 11, obj_pos)
-        move_to_input_angles(",".join([f"{a:.4f}" for a in ik_grasp[:7]]))
+        move_to_input_angles(approach_str)
 
-        # Close gripper
         for _ in range(30):
             for fj in finger_joints:
                 p.setJointMotorControl2(robot, fj, p.POSITION_CONTROL, targetPosition=0.0)
             p.stepSimulation()
             time.sleep(0.01)
 
-        # Lift
-        lift_pos = list(obj_pos)
-        lift_pos[2] += 0.15
-        ik_lift = p.calculateInverseKinematics(robot, 11, lift_pos)
-        move_to_input_angles(",".join([f"{a:.4f}" for a in ik_lift[:7]]))
+        lifted = [a + 0.1 for a in approach_angles]
+        for i in range(100):
+            blended = [(1 - i/100) * approach_angles[j] + (i/100) * lifted[j] for j in range(7)]
+            for idx, val in zip(arm_joints, blended):
+                p.setJointMotorControl2(robot, idx, p.POSITION_CONTROL, targetPosition=val)
+            p.stepSimulation()
+            time.sleep(0.01)
 
-        # Move to place
-        place_pos = [px, py, pz]
-        ik_place = p.calculateInverseKinematics(robot, 11, place_pos)
-        move_to_input_angles(",".join([f"{a:.4f}" for a in ik_place[:7]]))
+        move_to_input_angles(place_str)
 
-        # Open gripper
         for _ in range(30):
             for fj in finger_joints:
                 p.setJointMotorControl2(robot, fj, p.POSITION_CONTROL, targetPosition=0.04)
             p.stepSimulation()
             time.sleep(0.01)
 
-        return render_sim(ik_place[:7], 0.04)
+        return render_sim(place_angles, 0.04)
     except Exception as e:
         return None, f"Error: {str(e)}"
 
-# Gripper selection stub
-def switch_gripper(gripper_type):
-    return f"Switched to: {gripper_type}"
-
-# Gradio Interface
-with gr.Blocks(title="Franka Arm Auto Pick and Place") as demo:
-    gr.Markdown("## 🤖 Franka 7-DOF Control")
-
-    gripper_selector = gr.Dropdown(["Two-Finger", "Suction"], value="Two-Finger", label="Select Gripper")
-    gripper_feedback = gr.Textbox(label="Gripper Status", interactive=False)
-    gripper_selector.change(fn=switch_gripper, inputs=gripper_selector, outputs=gripper_feedback)
+# Gradio UI
+with gr.Blocks(title="Franka Arm Pick & Place") as demo:
+    gr.Markdown("## 🤖 Franka Panda Robot Control")
 
     joint_sliders = []
     with gr.Row():
@@ -171,14 +157,24 @@ with gr.Blocks(title="Franka Arm Auto Pick and Place") as demo:
         inputs=[], outputs=[img_output, text_output]
     )
 
-    gr.Markdown("### 🎯 Auto Pick and Place (from object to custom location)")
-    px = gr.Slider(0.3, 0.8, value=0.4, label="Place X")
-    py = gr.Slider(-0.3, 0.3, value=0.0, label="Place Y")
-    pz = gr.Slider(0.02, 0.4, value=0.05, label="Place Z")
+    gr.Markdown("### ✍️ Move Robot to Custom Joint Angles")
+    joint_input_box = gr.Textbox(
+        label="Enter 7 Joint Angles (comma-separated)",
+        placeholder="e.g. 0.0, -0.5, 0.3, -1.2, 0.0, 1.5, 0.8"
+    )
+    gr.Button("▶️ Move to Angles").click(
+        fn=move_to_input_angles,
+        inputs=joint_input_box,
+        outputs=[img_output, text_output]
+    )
 
-    gr.Button("🤖 Auto Pick and Place").click(
-        fn=pick_and_place_auto,
-        inputs=[px, py, pz],
+    gr.Markdown("### 🧾 Pick and Place Input (3 sets of joint angles)")
+    position_input = gr.Textbox(label="Object Position Angles", placeholder="7 angles...")
+    approach_input = gr.Textbox(label="Approach Angles", placeholder="7 angles...")
+    place_input = gr.Textbox(label="Place Angles", placeholder="7 angles...")
+    gr.Button("🤖 Perform Pick and Place").click(
+        fn=pick_and_place,
+        inputs=[position_input, approach_input, place_input],
         outputs=[img_output, text_output]
     )
 

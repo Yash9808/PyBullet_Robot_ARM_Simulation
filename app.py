@@ -119,6 +119,10 @@ def pick_and_place(position_str, approach_str, place_str, cam_xyz, target_xyz):
     except Exception as e:
         return None, f"Error: {str(e)}"
 
+# Copy current joint angles
+def copy_current_joint_angles(*vals):
+    return ", ".join([f"{v:.4f}" for v in vals])
+
 with gr.Blocks(title="Franka Arm with 3D Camera Control") as demo:
     gr.Markdown("## 🤖 Franka Robot with Camera + Joint Control")
 
@@ -132,25 +136,25 @@ with gr.Blocks(title="Franka Arm with 3D Camera Control") as demo:
             joint_sliders.append(gr.Slider(-3.14, 3.14, value=0, label=f"Joint {i+1}"))
         gripper = gr.Slider(0.0, 0.04, value=0.02, step=0.001, label="Gripper")
 
-    # Camera and target sliders BELOW joint sliders
+    # Compact camera + target controls
     with gr.Row():
-        with gr.Column():
-            gr.Markdown("**Camera Position**")
+        with gr.Column(scale=1):
+            gr.Markdown("<span style='font-size: 14px'><b>Camera Position</b></span>", unsafe_allow_html=True)
             cam_x = gr.Slider(-3, 3, value=1.5, label="X")
             cam_y = gr.Slider(-3, 3, value=0.0, label="Y")
             cam_z = gr.Slider(-1, 3, value=1.0, label="Z")
-        with gr.Column():
-            gr.Markdown("**Target Point**")
+        with gr.Column(scale=1):
+            gr.Markdown("<span style='font-size: 14px'><b>Target Point</b></span>", unsafe_allow_html=True)
             tgt_x = gr.Slider(-1, 1, value=0.0, label="X")
             tgt_y = gr.Slider(-1, 1, value=0.0, label="Y")
             tgt_z = gr.Slider(0, 2, value=0.5, label="Z")
 
-    # Simulation image and joint output
+    # Live image + output
     with gr.Row():
         img_output = gr.Image(type="filepath", label="Simulation View")
         text_output = gr.Textbox(label="Joint States", lines=10)
 
-    # Live update on any slider change
+    # Live simulation update
     def live_update(*vals):
         joints = list(vals[:7])
         grip = vals[7]
@@ -167,6 +171,7 @@ with gr.Blocks(title="Franka Arm with 3D Camera Control") as demo:
         inputs=[], outputs=[img_output, text_output]
     )
 
+    # Move to angles box
     gr.Markdown("### ✍️ Move Robot to Custom Joint Angles")
     joint_input_box = gr.Textbox(label="Enter 7 Joint Angles (comma-separated)")
     gr.Button("▶️ Move to Angles").click(
@@ -175,10 +180,21 @@ with gr.Blocks(title="Franka Arm with 3D Camera Control") as demo:
         outputs=[img_output, text_output]
     )
 
+    # Pick and Place section
     gr.Markdown("### 🧾 Pick and Place Input (3 sets of joint angles)")
-    position_input = gr.Textbox(label="Object Position Angles")
-    approach_input = gr.Textbox(label="Approach Angles")
-    place_input = gr.Textbox(label="Place Angles")
+
+    with gr.Row():
+        position_input = gr.Textbox(label="Object Position Angles")
+        gr.Button("📋 Copy").click(fn=copy_current_joint_angles, inputs=joint_sliders, outputs=position_input)
+
+    with gr.Row():
+        approach_input = gr.Textbox(label="Approach Angles")
+        gr.Button("📋 Copy").click(fn=copy_current_joint_angles, inputs=joint_sliders, outputs=approach_input)
+
+    with gr.Row():
+        place_input = gr.Textbox(label="Place Angles")
+        gr.Button("📋 Copy").click(fn=copy_current_joint_angles, inputs=joint_sliders, outputs=place_input)
+
     gr.Button("🤖 Perform Pick and Place").click(
         fn=lambda p, a, pl, x, y, z, tx, ty, tz: pick_and_place(p, a, pl, [x, y, z], [tx, ty, tz]),
         inputs=[position_input, approach_input, place_input, cam_x, cam_y, cam_z, tgt_x, tgt_y, tgt_z],

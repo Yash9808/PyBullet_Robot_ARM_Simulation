@@ -116,3 +116,6 @@ with gr.Blocks(title="Franka Arm Control with 7 DoF and Gripper Options") as dem
 
     gr.Button("🔄 Reset Robot").click(fn=reset, inputs=[], outputs=[img_output, text_output])
 
+demo.launch(debug=True)
+
+

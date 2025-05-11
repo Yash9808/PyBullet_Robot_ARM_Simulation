@@ -18,8 +18,11 @@ def get_panda_joints(robot):
     for i in range(p.getNumJoints(robot)):
         info = p.getJointInfo(robot, i)
         name = info[1].decode()
-        if info[2] == p.JOINT_REVOLUTE:
-            (fingers if "finger" in name else arm).append(i)
+        joint_type = info[2]
+        if "finger" in name and joint_type == p.JOINT_PRISMATIC:
+            fingers.append(i)
+        elif joint_type == p.JOINT_REVOLUTE:
+            arm.append(i)
     return arm, fingers
 
 arm_joints, finger_joints = get_panda_joints(robot)
@@ -43,8 +46,12 @@ def render_sim(joint_values, gripper_val):
     # Apply joint controls
     for idx, tgt in zip(arm_joints, joint_values):
         p.setJointMotorControl2(robot, idx, p.POSITION_CONTROL, targetPosition=tgt)
-    for fj in finger_joints:
-        p.setJointMotorControl2(robot, fj, p.POSITION_CONTROL, targetPosition=gripper_val)
+
+    # Open/close gripper symmetrically
+    if len(finger_joints) == 2:
+        p.setJointMotorControl2(robot, finger_joints[0], p.POSITION_CONTROL, targetPosition=gripper_val)
+        p.setJointMotorControl2(robot, finger_joints[1], p.POSITION_CONTROL, targetPosition=gripper_val)
+
     for _ in range(10): p.stepSimulation()
 
     # Refresh joint labels
@@ -73,8 +80,6 @@ def render_sim(joint_values, gripper_val):
 # Load gripper type (placeholder logic)
 def switch_gripper(gripper_type):
     print(f"Switching to gripper: {gripper_type}")
-    # In real case, remove current gripper, attach new one
-    # For demo, just return something to show
     return f"Switched to: {gripper_type}"
 
 # Gradio UI
@@ -117,5 +122,3 @@ with gr.Blocks(title="Franka Arm Control with 7 DoF and Gripper Options") as dem
     gr.Button("🔄 Reset Robot").click(fn=reset, inputs=[], outputs=[img_output, text_output])
 
 demo.launch(debug=True)
-
-

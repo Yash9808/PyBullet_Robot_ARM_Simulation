@@ -81,6 +81,29 @@ def render_sim(joint_values, gripper_val):
     joint_text += f"\nGripper = {gripper_val:.3f} m"
     return tmp.name, joint_text
 
+# Smooth motion to input angles
+def move_to_input_angles(joint_str):
+    try:
+        target_angles = [float(x.strip()) for x in joint_str.split(",")]
+        if len(target_angles) != 7:
+            return None, "❌ Please enter exactly 7 joint angles."
+
+        # Get current joint positions
+        current = [p.getJointState(robot, idx)[0] for idx in arm_joints]
+        steps = 100
+        for i in range(steps):
+            blend = [(1 - i/steps) * c + (i/steps) * t for c, t in zip(current, target_angles)]
+            for idx, val in zip(arm_joints, blend):
+                p.setJointMotorControl2(robot, idx, p.POSITION_CONTROL, targetPosition=val)
+            p.stepSimulation()
+            time.sleep(0.01)
+
+        current_grip = p.getJointState(robot, finger_joints[0])[0]
+        return render_sim(target_angles, current_grip)
+
+    except Exception as e:
+        return None, f"Error: {str(e)}"
+
 # Pick and place motion
 def pick_and_place():
     pre_grasp = [0, -0.5, 0, -2.0, 0, 1.5, 0.8]
@@ -153,5 +176,10 @@ with gr.Blocks(title="Franka Arm Control with 7 DoF and Gripper Options") as dem
 
     # Pick and Place Button
     gr.Button("🤖 Pick and Place").click(fn=pick_and_place, inputs=[], outputs=[img_output, text_output])
+
+    # Joint angle input box
+    gr.Markdown("### 🧾 Enter Joint Angles (comma-separated)")
+    joint_input = gr.Textbox(label="Joint Angles (7 values in radians)", placeholder="e.g. 0.0, -0.5, 0.3, -1.2, 0.0, 1.5, 0.8")
+    gr.Button("▶️ Move to Angles").click(fn=move_to_input_angles, inputs=joint_input, outputs=[img_output, text_output])
 
 demo.launch(debug=True)

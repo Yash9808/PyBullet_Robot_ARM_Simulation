@@ -1,5 +1,3 @@
-# Full adapted pick-and-place demo with consistent style
-
 import pybullet as p
 import pybullet_data
 import numpy as np
@@ -91,46 +89,47 @@ def move_to_input_angles(joint_str):
     except Exception as e:
         return None, f"Error: {str(e)}"
 
-# Pick-and-place sequence
-def pick_and_place(position_str, approach_str, place_str):
+# Auto Pick and Place using IK
+def pick_and_place_auto(px, py, pz):
     try:
-        position_angles = [float(x.strip()) for x in position_str.split(",")]
-        approach_angles = [float(x.strip()) for x in approach_str.split(",")]
-        place_angles = [float(x.strip()) for x in place_str.split(",")]
+        obj_pos, _ = p.getBasePositionAndOrientation(cube_id)
+        above_obj = list(obj_pos)
+        above_obj[2] += 0.1
 
-        if len(position_angles) != 7 or len(approach_angles) != 7 or len(place_angles) != 7:
-            return None, "❌ All inputs must have 7 joint angles."
+        # Move above object
+        ik_approach = p.calculateInverseKinematics(robot, 11, above_obj)
+        move_to_input_angles(",".join([f"{a:.4f}" for a in ik_approach[:7]]))
 
-        # Move to approach
-        move_to_input_angles(approach_str)
+        # Move to grasp position
+        ik_grasp = p.calculateInverseKinematics(robot, 11, obj_pos)
+        move_to_input_angles(",".join([f"{a:.4f}" for a in ik_grasp[:7]]))
 
-        # Grasp
+        # Close gripper
         for _ in range(30):
             for fj in finger_joints:
                 p.setJointMotorControl2(robot, fj, p.POSITION_CONTROL, targetPosition=0.0)
             p.stepSimulation()
             time.sleep(0.01)
 
-        # Lift slightly
-        lifted = [a + 0.1 for a in approach_angles]
-        for i in range(100):
-            blended = [(1 - i/100) * approach_angles[j] + (i/100) * lifted[j] for j in range(7)]
-            for idx, val in zip(arm_joints, blended):
-                p.setJointMotorControl2(robot, idx, p.POSITION_CONTROL, targetPosition=val)
-            p.stepSimulation()
-            time.sleep(0.01)
+        # Lift
+        lift_pos = list(obj_pos)
+        lift_pos[2] += 0.15
+        ik_lift = p.calculateInverseKinematics(robot, 11, lift_pos)
+        move_to_input_angles(",".join([f"{a:.4f}" for a in ik_lift[:7]]))
 
         # Move to place
-        move_to_input_angles(place_str)
+        place_pos = [px, py, pz]
+        ik_place = p.calculateInverseKinematics(robot, 11, place_pos)
+        move_to_input_angles(",".join([f"{a:.4f}" for a in ik_place[:7]]))
 
-        # Release
+        # Open gripper
         for _ in range(30):
             for fj in finger_joints:
                 p.setJointMotorControl2(robot, fj, p.POSITION_CONTROL, targetPosition=0.04)
             p.stepSimulation()
             time.sleep(0.01)
 
-        return render_sim(place_angles, 0.04)
+        return render_sim(ik_place[:7], 0.04)
     except Exception as e:
         return None, f"Error: {str(e)}"
 
@@ -139,7 +138,7 @@ def switch_gripper(gripper_type):
     return f"Switched to: {gripper_type}"
 
 # Gradio Interface
-with gr.Blocks(title="Franka Arm Control with Pick and Place") as demo:
+with gr.Blocks(title="Franka Arm Auto Pick and Place") as demo:
     gr.Markdown("## 🤖 Franka 7-DOF Control")
 
     gripper_selector = gr.Dropdown(["Two-Finger", "Suction"], value="Two-Finger", label="Select Gripper")
@@ -172,17 +171,14 @@ with gr.Blocks(title="Franka Arm Control with Pick and Place") as demo:
         inputs=[], outputs=[img_output, text_output]
     )
 
-    gr.Markdown("### 🧾 Enter Joint Angles (comma-separated)")
-    joint_input = gr.Textbox(label="Joint Angles (7 values)", placeholder="e.g. 0.0, -0.5, 0.3, -1.2, 0.0, 1.5, 0.8")
-    gr.Button("▶️ Move to Angles").click(fn=move_to_input_angles, inputs=joint_input, outputs=[img_output, text_output])
+    gr.Markdown("### 🎯 Auto Pick and Place (from object to custom location)")
+    px = gr.Slider(0.3, 0.8, value=0.4, label="Place X")
+    py = gr.Slider(-0.3, 0.3, value=0.0, label="Place Y")
+    pz = gr.Slider(0.02, 0.4, value=0.05, label="Place Z")
 
-    gr.Markdown("### 🧾 Pick and Place Input (3 sets of joint angles)")
-    position_input = gr.Textbox(label="Object Position Angles", placeholder="e.g. 0.1, -0.3, 0.2, -1.0, 0.0, 1.2, 0.5")
-    approach_input = gr.Textbox(label="Approach Angles", placeholder="e.g. 0.1, -0.5, 0.25, -1.2, 0.0, 1.3, 0.5")
-    place_input = gr.Textbox(label="Place Angles", placeholder="e.g. 0.3, -0.4, 0.15, -1.4, 0.0, 1.4, 0.4")
-    gr.Button("🤖 Perform Pick and Place").click(
-        fn=pick_and_place,
-        inputs=[position_input, approach_input, place_input],
+    gr.Button("🤖 Auto Pick and Place").click(
+        fn=pick_and_place_auto,
+        inputs=[px, py, pz],
         outputs=[img_output, text_output]
     )
 

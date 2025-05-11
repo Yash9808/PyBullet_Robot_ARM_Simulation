@@ -120,8 +120,9 @@ def pick_and_place(position_str, approach_str, place_str, cam_xyz, target_xyz):
         return None, f"Error: {str(e)}"
 
 with gr.Blocks(title="Franka Arm with 3D Camera Control") as demo:
-    gr.Markdown("## 🤖 Franka Robot with Camera Controls")
+    gr.Markdown("## 🤖 Franka Robot with Camera + Joint Control")
 
+    # Joint and gripper sliders
     joint_sliders = []
     with gr.Row():
         for i in range(4):
@@ -131,23 +132,25 @@ with gr.Blocks(title="Franka Arm with 3D Camera Control") as demo:
             joint_sliders.append(gr.Slider(-3.14, 3.14, value=0, label=f"Joint {i+1}"))
         gripper = gr.Slider(0.0, 0.04, value=0.02, step=0.001, label="Gripper")
 
+    # Camera and target sliders BELOW joint sliders
     with gr.Row():
-        with gr.Column(scale=2):
-            img_output = gr.Image(type="filepath", label="Simulation View")
-            with gr.Row():
-                with gr.Column():
-                    gr.Markdown("**Camera Position**")
-                    cam_x = gr.Slider(-3, 3, value=1.5, label="X")
-                    cam_y = gr.Slider(-3, 3, value=0.0, label="Y")
-                    cam_z = gr.Slider(-1, 3, value=1.0, label="Z")
-                with gr.Column():
-                    gr.Markdown("**Target Point**")
-                    tgt_x = gr.Slider(-1, 1, value=0.0, label="X")
-                    tgt_y = gr.Slider(-1, 1, value=0.0, label="Y")
-                    tgt_z = gr.Slider(0, 2, value=0.5, label="Z")
-        with gr.Column(scale=1):
-            text_output = gr.Textbox(label="Joint States", lines=10)
+        with gr.Column():
+            gr.Markdown("**Camera Position**")
+            cam_x = gr.Slider(-3, 3, value=1.5, label="X")
+            cam_y = gr.Slider(-3, 3, value=0.0, label="Y")
+            cam_z = gr.Slider(-1, 3, value=1.0, label="Z")
+        with gr.Column():
+            gr.Markdown("**Target Point**")
+            tgt_x = gr.Slider(-1, 1, value=0.0, label="X")
+            tgt_y = gr.Slider(-1, 1, value=0.0, label="Y")
+            tgt_z = gr.Slider(0, 2, value=0.5, label="Z")
 
+    # Simulation image and joint output
+    with gr.Row():
+        img_output = gr.Image(type="filepath", label="Simulation View")
+        text_output = gr.Textbox(label="Joint States", lines=10)
+
+    # Live update on any slider change
     def live_update(*vals):
         joints = list(vals[:7])
         grip = vals[7]
@@ -183,4 +186,5 @@ with gr.Blocks(title="Franka Arm with 3D Camera Control") as demo:
     )
 
 demo.launch(debug=True)
+
 

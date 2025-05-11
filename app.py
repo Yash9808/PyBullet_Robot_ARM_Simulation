@@ -91,33 +91,48 @@ def pick_and_place(position_str, approach_str, place_str, cam_xyz, target_xyz):
         if len(position_angles) != 7 or len(approach_angles) != 7 or len(place_angles) != 7:
             return None, "❌ All inputs must have 7 joint angles."
 
+        # Move to pre-grasp approach pose
         move_to_input_angles(approach_str, cam_xyz, target_xyz)
 
-        for _ in range(30):
-            for fj in finger_joints:
-                p.setJointMotorControl2(robot, fj, p.POSITION_CONTROL, targetPosition=0.0)
-            p.stepSimulation()
-            time.sleep(0.01)
-
-        lifted = [a + 0.1 for a in approach_angles]
-        for i in range(100):
-            blended = [(1 - i/100) * approach_angles[j] + (i/100) * lifted[j] for j in range(7)]
-            for idx, val in zip(arm_joints, blended):
+        # Grasping: move to actual grasp pose (over the object)
+        steps = 50
+        for i in range(steps):
+            interpolated = [(1 - i/steps) * approach_angles[j] + (i/steps) * position_angles[j] for j in range(7)]
+            for idx, val in zip(arm_joints, interpolated):
                 p.setJointMotorControl2(robot, idx, p.POSITION_CONTROL, targetPosition=val)
             p.stepSimulation()
             time.sleep(0.01)
 
-        move_to_input_angles(place_str, cam_xyz, target_xyz)
-
+        # Close the gripper to grasp
         for _ in range(30):
             for fj in finger_joints:
-                p.setJointMotorControl2(robot, fj, p.POSITION_CONTROL, targetPosition=0.04)
+                p.setJointMotorControl2(robot, fj, p.POSITION_CONTROL, targetPosition=0.0)  # Closed
+            p.stepSimulation()
+            time.sleep(0.01)
+
+        # Lift object slightly from grasp position
+        lifted_angles = [a + 0.1 for a in position_angles]  # Add a small lift to each joint
+        for i in range(steps):
+            lifted_pose = [(1 - i/steps) * position_angles[j] + (i/steps) * lifted_angles[j] for j in range(7)]
+            for idx, val in zip(arm_joints, lifted_pose):
+                p.setJointMotorControl2(robot, idx, p.POSITION_CONTROL, targetPosition=val)
+            p.stepSimulation()
+            time.sleep(0.01)
+
+        # Move to place location
+        move_to_input_angles(place_str, cam_xyz, target_xyz)
+
+        # Release the gripper
+        for _ in range(30):
+            for fj in finger_joints:
+                p.setJointMotorControl2(robot, fj, p.POSITION_CONTROL, targetPosition=0.04)  # Open
             p.stepSimulation()
             time.sleep(0.01)
 
         return render_sim(place_angles, 0.04, cam_xyz, target_xyz)
     except Exception as e:
         return None, f"Error: {str(e)}"
+
 
 # Copy current joint angles
 def copy_current_joint_angles(*vals):

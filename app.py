@@ -5,90 +5,107 @@ import matplotlib.pyplot as plt
 import tempfile
 import gradio as gr
 
-# Setup PyBullet simulation
-physicsClient = p.connect(p.DIRECT)
+# Setup PyBullet
+p.connect(p.DIRECT)
 p.setAdditionalSearchPath(pybullet_data.getDataPath())
 p.setGravity(0, 0, -9.8)
 p.loadURDF("plane.urdf")
-
-# 🔒 Fix the base of the robot to the ground
 robot = p.loadURDF("franka_panda/panda.urdf", basePosition=[0, 0, 0], useFixedBase=True)
 
+# Get joint indices
 def get_panda_joints(robot):
-    revolute, finger = [], []
+    arm, fingers = [], []
     for i in range(p.getNumJoints(robot)):
-        name = p.getJointInfo(robot, i)[1].decode()
-        joint_type = p.getJointInfo(robot, i)[2]
-        if joint_type == p.JOINT_REVOLUTE:
-            (finger if "finger" in name else revolute).append(i)
-    return revolute, finger
+        info = p.getJointInfo(robot, i)
+        name = info[1].decode()
+        if info[2] == p.JOINT_REVOLUTE:
+            (fingers if "finger" in name else arm).append(i)
+    return arm, fingers
 
 arm_joints, finger_joints = get_panda_joints(robot)
 
+# Add 3D debug labels to the robot's joints
+debug_labels = []
+def add_joint_labels():
+    global debug_labels
+    for i in debug_labels:
+        p.removeUserDebugItem(i)
+    debug_labels.clear()
+    for idx in arm_joints:
+        link_state = p.getLinkState(robot, idx)
+        pos = link_state[0]
+        lbl = f"J{arm_joints.index(idx)+1}"
+        text_id = p.addUserDebugText(lbl, pos, textColorRGB=[1, 0, 0], textSize=1.2)
+        debug_labels.append(text_id)
+
+# Render image and info
 def render_sim(joint_values, gripper_val):
-    # Set joint angles
-    for idx, tgt in zip(arm_joints[:4], joint_values):
+    # Apply joint controls
+    for idx, tgt in zip(arm_joints, joint_values):
         p.setJointMotorControl2(robot, idx, p.POSITION_CONTROL, targetPosition=tgt)
     for fj in finger_joints:
         p.setJointMotorControl2(robot, fj, p.POSITION_CONTROL, targetPosition=gripper_val)
     for _ in range(10): p.stepSimulation()
 
-    # Render camera
+    # Refresh joint labels
+    add_joint_labels()
+
+    # Camera
     width, height = 512, 512
     view_matrix = p.computeViewMatrix([1.5, 0, 1], [0, 0, 0.5], [0, 0, 1])
     proj_matrix = p.computeProjectionMatrixFOV(60, width / height, 0.1, 3.1)
     _, _, img, _, _ = p.getCameraImage(width, height, view_matrix, proj_matrix)
     rgb = np.reshape(img, (height, width, 4))[:, :, :3]
 
-    # Plot image with joint labels
+    # Image to file
     fig, ax = plt.subplots(figsize=(5, 5))
     ax.imshow(rgb.astype(np.uint8))
     ax.axis("off")
-    labels = ["J1", "J2", "J3", "J4"]
-    positions = [(180, 400), (220, 320), (260, 240), (300, 160)]
-    for label, pos in zip(labels, positions):
-        ax.text(*pos, label, color="red", fontsize=12, fontweight="bold")
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
     plt.savefig(tmp.name, bbox_inches='tight')
     plt.close()
 
-    # Joint state text
-    joint_text = (
-        f"Joint Angles:\n"
-        f"J1 = {joint_values[0]:.2f} rad\n"
-        f"J2 = {joint_values[1]:.2f} rad\n"
-        f"J3 = {joint_values[2]:.2f} rad\n"
-        f"J4 = {joint_values[3]:.2f} rad\n"
-        f"Gripper = {gripper_val:.3f} m"
-    )
+    # Text output
+    joint_text = "Joint Angles:\n" + "\n".join([f"J{i+1} = {v:.2f} rad" for i, v in enumerate(joint_values)])
+    joint_text += f"\nGripper = {gripper_val:.3f} m"
     return tmp.name, joint_text
 
-# Launch Gradio with Blocks
-with gr.Blocks(title="Live Robot Control with Reset") as demo:
-    gr.Markdown("## 🤖 Live Robot Control\nUse sliders below or click Reset to restore pose.")
+# Load gripper type (placeholder logic)
+def switch_gripper(gripper_type):
+    print(f"Switching to gripper: {gripper_type}")
+    # In real case, remove current gripper, attach new one
+    # For demo, just return something to show
+    return f"Switched to: {gripper_type}"
 
-    with gr.Row():
-        j1 = gr.Slider(-3.14, 3.14, value=0, label="Joint 1", interactive=True)
-        j2 = gr.Slider(-3.14, 3.14, value=0, label="Joint 2", interactive=True)
-        j3 = gr.Slider(-3.14, 3.14, value=0, label="Joint 3", interactive=True)
-        j4 = gr.Slider(-3.14, 3.14, value=0, label="Joint 4", interactive=True)
-        gripper = gr.Slider(0.0, 0.04, value=0.02, step=0.001, label="Gripper Opening", interactive=True)
+# Gradio UI
+with gr.Blocks(title="Franka Arm Control with 7 DoF and Gripper Options") as demo:
+    gr.Markdown("## 🤖 Franka 7-DOF Control\nUse the sliders to manipulate the robot arm.")
+
+    # Gripper selection
+    gripper_selector = gr.Dropdown(["Two-Finger", "Suction"], value="Two-Finger", label="Select Gripper")
+    gripper_feedback = gr.Textbox(label="Gripper Status", interactive=False)
+    gripper_selector.change(fn=switch_gripper, inputs=gripper_selector, outputs=gripper_feedback)
+
+    # 7 DoF sliders
+    joint_sliders = [gr.Slider(-3.14, 3.14, value=0, label=f"Joint {i+1}") for i in range(7)]
+    gripper = gr.Slider(0.0, 0.04, value=0.02, step=0.001, label="Gripper Opening")
 
     with gr.Row():
         img_output = gr.Image(type="filepath", label="Simulation View")
         text_output = gr.Textbox(label="Joint States")
 
-    # Live update function
-    def live_update(j1_val, j2_val, j3_val, j4_val, grip_val):
-        return render_sim([j1_val, j2_val, j3_val, j4_val], grip_val)
+    # Update all joints
+    def live_update(*vals):
+        joints = list(vals[:-1])  # first 7 values
+        grip = vals[-1]
+        return render_sim(joints, grip)
 
-    # Connect sliders to live update
-    for slider in [j1, j2, j3, j4, gripper]:
-        slider.change(live_update, inputs=[j1, j2, j3, j4, gripper], outputs=[img_output, text_output])
+    for s in joint_sliders + [gripper]:
+        s.change(fn=live_update, inputs=joint_sliders + [gripper], outputs=[img_output, text_output])
 
     # Reset button
     def reset():
-        return render_sim([0, 0, 0, 0], 0.02)
+        return render_sim([0]*7, 0.02)
 
     gr.Button("🔄 Reset Robot").click(fn=reset, inputs=[], outputs=[img_output, text_output])
 

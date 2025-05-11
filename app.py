@@ -181,6 +181,11 @@ with gr.Blocks(title="Franka Arm Control with 7 DoF and Gripper Options") as dem
 
     gr.Button("🔄 Reset Robot").click(fn=reset, inputs=[], outputs=[img_output, text_output])
 
+    # Joint angles input box for user to input manually
+    gr.Markdown("### 🧾 Enter Joint Angles (comma-separated)")
+    joint_input = gr.Textbox(label="Joint Angles (7 values in radians)", placeholder="e.g. 0.0, -0.5, 0.3, -1.2, 0.0, 1.5, 0.8")
+    gr.Button("▶️ Move to Angles").click(fn=move_to_input_angles, inputs=joint_input, outputs=[img_output, text_output])
+
     # Pick and Place Inputs
     gr.Markdown("### 🧾 Enter Joint Angles for Pick and Place")
     position_input = gr.Textbox(label="Position Angles (7 values in radians)", placeholder="e.g. 0.0, -0.5, 0.3, -1.2, 0.0, 1.5, 0.8")

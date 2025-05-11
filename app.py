@@ -6,16 +6,16 @@ import tempfile
 import gradio as gr
 import time
 
-# Setup PyBullet
+# Initialize PyBullet
 p.connect(p.DIRECT)
 p.setAdditionalSearchPath(pybullet_data.getDataPath())
 p.setGravity(0, 0, -9.8)
 p.loadURDF("plane.urdf")
 robot = p.loadURDF("franka_panda/panda.urdf", basePosition=[0, 0, 0], useFixedBase=True)
 
-# Add a cube to pick (black color by default)
+# Add object (default: black cube)
 cube_id = p.loadURDF("cube_small.urdf", basePosition=[0.6, 0, 0.02])
-p.changeVisualShape(cube_id, -1, rgbaColor=[0, 0, 0, 1])  # Change the cube color to black
+p.changeVisualShape(cube_id, -1, rgbaColor=[0, 0, 0, 1])
 
 # Get joint indices
 def get_panda_joints(robot):
@@ -32,149 +32,134 @@ def get_panda_joints(robot):
 
 arm_joints, finger_joints = get_panda_joints(robot)
 
-# Add 3D debug labels to the robot's joints
-debug_labels = []
 def add_joint_labels():
-    global debug_labels
-    for i in debug_labels:
-        p.removeUserDebugItem(i)
-    debug_labels.clear()
-    for idx in arm_joints:
-        link_state = p.getLinkState(robot, idx)
-        pos = link_state[0]
-        lbl = f"J{arm_joints.index(idx)+1}"
-        text_id = p.addUserDebugText(lbl, pos, textColorRGB=[1, 0, 0], textSize=1.2)
-        debug_labels.append(text_id)
+    for i in range(len(arm_joints)):
+        pos = p.getLinkState(robot, arm_joints[i])[0]
+        p.addUserDebugText(f"J{i+1}", pos, textColorRGB=[1, 0, 0], textSize=1.2)
 
-# Change cube color dynamically
-def change_cube_color(color):
-    color_map = {
-        "Black": [0, 0, 0, 1],
-        "Red": [1, 0, 0, 1],
-        "Green": [0, 1, 0, 1],
-        "Blue": [0, 0, 1, 1],
-        "Yellow": [1, 1, 0, 1],
-        "White": [1, 1, 1, 1]
-    }
-    p.changeVisualShape(cube_id, -1, rgbaColor=color_map[color])
-
-# Render image and info
-def render_sim(joint_values, gripper_val, camera_angles):
-    # Apply joint controls
+# Camera config (yaw, pitch, dist)
+camera_angles = [45, -30, 1.5]  # Default values
+def render_sim(joint_values, gripper_val, cube_color):
     for idx, tgt in zip(arm_joints, joint_values):
         p.setJointMotorControl2(robot, idx, p.POSITION_CONTROL, targetPosition=tgt)
 
-    # Open/close gripper symmetrically
-    if len(finger_joints) == 2:
-        p.setJointMotorControl2(robot, finger_joints[0], p.POSITION_CONTROL, targetPosition=gripper_val)
-        p.setJointMotorControl2(robot, finger_joints[1], p.POSITION_CONTROL, targetPosition=gripper_val)
+    for _ in range(5):
+        for fj in finger_joints:
+            p.setJointMotorControl2(robot, fj, p.POSITION_CONTROL, targetPosition=gripper_val)
+        p.stepSimulation()
 
-    for _ in range(10): p.stepSimulation()
+    # Cube color update
+    p.changeVisualShape(cube_id, -1, rgbaColor=cube_color + [1])
 
-    # Refresh joint labels
-    add_joint_labels()
+    # View camera
+    view_matrix = p.computeViewMatrixFromYawPitchRoll(
+        cameraTargetPosition=[0, 0, 0.5],
+        distance=camera_angles[2],
+        yaw=camera_angles[0],
+        pitch=camera_angles[1],
+        roll=0,
+        upAxisIndex=2,
+    )
+    proj_matrix = p.computeProjectionMatrixFOV(60, 1, 0.1, 3.1)
+    _, _, img, _, _ = p.getCameraImage(640, 640, view_matrix, proj_matrix)
+    rgb = np.reshape(img, (640, 640, 4))[:, :, :3]
 
-    # Camera view
-    width, height = 1280, 1280  # Increased resolution for clarity
-    view_matrix = p.computeViewMatrixFromYawPitchRoll(camera_angles[0], camera_angles[1], camera_angles[2], [1.5, 0, 1], [0, 0, 0.5], [0, 0, 1])
-    proj_matrix = p.computeProjectionMatrixFOV(60, width / height, 0.1, 3.1)
-    _, _, img, _, _ = p.getCameraImage(width, height, view_matrix, proj_matrix)
-    rgb = np.reshape(img, (height, width, 4))[:, :, :3]
-
-    # Image to file
-    fig, ax = plt.subplots(figsize=(5, 5))
+    fig, ax = plt.subplots()
     ax.imshow(rgb.astype(np.uint8))
     ax.axis("off")
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
-    plt.savefig(tmp.name, bbox_inches='tight', dpi=200)  # Increased DPI for sharper image
+    plt.savefig(tmp.name, bbox_inches='tight', dpi=150)
     plt.close()
 
-    # Text output
-    joint_text = "Joint Angles:\n" + "\n".join([f"J{i+1} = {v:.2f} rad" for i, v in enumerate(joint_values)])
-    joint_text += f"\nGripper = {gripper_val:.3f} m"
-    return tmp.name, joint_text
+    return tmp.name, f"Joint Angles: {[round(j,2) for j in joint_values]}, Gripper: {round(gripper_val, 3)}"
 
-# Smooth motion to input angles
 def move_to_input_angles(joint_str):
     try:
         target_angles = [float(x.strip()) for x in joint_str.split(",")]
         if len(target_angles) != 7:
             return None, "❌ Please enter exactly 7 joint angles."
 
-        # Get current joint positions
         current = [p.getJointState(robot, idx)[0] for idx in arm_joints]
-        steps = 100
-        for i in range(steps):
-            blend = [(1 - i/steps) * c + (i/steps) * t for c, t in zip(current, target_angles)]
+        for i in range(50):
+            blend = [(1 - i/50) * c + (i/50) * t for c, t in zip(current, target_angles)]
             for idx, val in zip(arm_joints, blend):
                 p.setJointMotorControl2(robot, idx, p.POSITION_CONTROL, targetPosition=val)
             p.stepSimulation()
-            time.sleep(0.01)
+            time.sleep(0.005)
 
-        current_grip = p.getJointState(robot, finger_joints[0])[0]
-        return render_sim(target_angles, current_grip, [0, 0, 0])
-
+        grip = p.getJointState(robot, finger_joints[0])[0]
+        return render_sim(target_angles, grip, current_cube_color)
     except Exception as e:
-        return None, f"Error: {str(e)}"
+        return None, str(e)
 
-# Gripper control
-def switch_gripper(gripper_type):
-    print(f"Switching to gripper: {gripper_type}")
-    return f"Switched to: {gripper_type}"
+# Pick and place
+current_cube_color = [0, 0, 0]  # Default black
 
-# Gradio UI
-with gr.Blocks(title="Franka Arm Control with 7 DoF and Gripper Options") as demo:
-    gr.Markdown("## 🤖 Franka 7-DOF Control\nUse the sliders to manipulate the robot arm.")
+def pick_and_place(position_str, approach_str, place_str):
+    position = [float(x) for x in position_str.split(",")]
+    approach = [float(x) for x in approach_str.split(",")]
+    place = [float(x) for x in place_str.split(",")]
 
-    # Gripper selection
-    gripper_selector = gr.Dropdown(["Two-Finger", "Suction"], value="Two-Finger", label="Select Gripper")
-    gripper_feedback = gr.Textbox(label="Gripper Status", interactive=False)
-    gripper_selector.change(fn=switch_gripper, inputs=gripper_selector, outputs=gripper_feedback)
+    move_to_input_angles(','.join(map(str, approach)))
 
-    # Multi-color option for the cube
-    color_selector = gr.Dropdown(["Black", "Red", "Green", "Blue", "Yellow", "White"], value="Black", label="Select Cube Color")
-    color_selector.change(fn=change_cube_color, inputs=color_selector, outputs=[])
+    for _ in range(30):
+        for fj in finger_joints:
+            p.setJointMotorControl2(robot, fj, p.POSITION_CONTROL, targetPosition=0.0)
+        p.stepSimulation()
+        time.sleep(0.01)
 
-    # 7 DoF sliders arranged in two rows
-    joint_sliders = []
-    with gr.Row():
-        for i in range(4):
-            joint_sliders.append(gr.Slider(-3.14, 3.14, value=0, label=f"Joint {i+1}"))
-    with gr.Row():
-        for i in range(4, 7):
-            joint_sliders.append(gr.Slider(-3.14, 3.14, value=0, label=f"Joint {i+1}"))
-        gripper = gr.Slider(0.0, 0.04, value=0.02, step=0.001, label="Gripper Opening")
+    move_to_input_angles(','.join([str(x + 0.1) for x in approach]))
+    move_to_input_angles(','.join(map(str, place)))
 
-    # Camera rotation sliders (for 3D view movement)
-    with gr.Row():
-        camera_yaw = gr.Slider(-180, 180, value=0, label="Camera Yaw")
-        camera_pitch = gr.Slider(-90, 90, value=0, label="Camera Pitch")
-        camera_roll = gr.Slider(-180, 180, value=0, label="Camera Roll")
+    for _ in range(30):
+        for fj in finger_joints:
+            p.setJointMotorControl2(robot, fj, p.POSITION_CONTROL, targetPosition=0.04)
+        p.stepSimulation()
+        time.sleep(0.01)
 
-    # Outputs
-    with gr.Row():
-        img_output = gr.Image(type="filepath", label="Simulation View")
-        text_output = gr.Textbox(label="Joint States")
+    return render_sim(place, 0.04, current_cube_color)
 
-    # Live update
+# UI
+with gr.Blocks(title="Franka Arm Control with Pick & Place") as demo:
+    gr.Markdown("# 🤖 Franka 7-DOF + Pick & Place")
+
+    # Camera controls
+    yaw = gr.Slider(-180, 180, value=camera_angles[0], label="Yaw")
+    pitch = gr.Slider(-90, 90, value=camera_angles[1], label="Pitch")
+    dist = gr.Slider(0.5, 3.0, value=camera_angles[2], label="Camera Distance")
+
+    def update_camera(y, p_, d):
+        camera_angles[0], camera_angles[1], camera_angles[2] = y, p_, d
+        return "Camera updated"
+
+    gr.Button("🎥 Update Camera").click(update_camera, [yaw, pitch, dist], outputs=gr.Textbox(label="Status"))
+
+    # Cube color
+    cube_color_picker = gr.ColorPicker(label="Pick Cube Color", value="#000000")
+
+    def update_color(color_hex):
+        global current_cube_color
+        rgb = tuple(int(color_hex[i:i+2], 16)/255. for i in (1, 3, 5))
+        current_cube_color = list(rgb)
+        return f"Updated color to {rgb}"
+
+    cube_color_picker.change(fn=update_color, inputs=cube_color_picker, outputs=gr.Textbox(label="Color Info"))
+
+    # Manual joints + gripper
+    joint_sliders = [gr.Slider(-3.14, 3.14, value=0, label=f"Joint {i+1}") for i in range(7)]
+    gripper = gr.Slider(0.0, 0.04, value=0.02, step=0.001, label="Gripper")
+
     def live_update(*vals):
-        joints = list(vals[:-1])
-        grip = vals[-1]
-        camera_angles = [camera_yaw.value, camera_pitch.value, camera_roll.value]
-        return render_sim(joints, grip, camera_angles)
+        return render_sim(list(vals[:-1]), vals[-1], current_cube_color)
 
-    for s in joint_sliders + [gripper, camera_yaw, camera_pitch, camera_roll]:
-        s.change(fn=live_update, inputs=joint_sliders + [gripper, camera_yaw, camera_pitch, camera_roll], outputs=[img_output, text_output])
+    for s in joint_sliders + [gripper]:
+        s.change(fn=live_update, inputs=joint_sliders + [gripper], outputs=[gr.Image(type="filepath"), gr.Textbox()])
 
-    # Reset button
-    def reset():
-        return render_sim([0]*7, 0.02, [0, 0, 0])
-
-    gr.Button("🔄 Reset Robot").click(fn=reset, inputs=[], outputs=[img_output, text_output])
-
-    # Joint angles input box for user to input manually
-    gr.Markdown("### 🧾 Enter Joint Angles (comma-separated)")
-    joint_input = gr.Textbox(label="Joint Angles (7 values in radians)", placeholder="e.g. 0.0, -0.5, 0.3, -1.2, 0.0, 1.5, 0.8")
-    gr.Button("▶️ Move to Angles").click(fn=move_to_input_angles, inputs=joint_input, outputs=[img_output, text_output])
+    # Pick and Place Inputs
+    gr.Markdown("## 🧠 Pick & Place Inputs")
+    pos_box = gr.Textbox(label="Position Angles")
+    approach_box = gr.Textbox(label="Approach Angles")
+    place_box = gr.Textbox(label="Place Angles")
+    gr.Button("🚚 Run Pick & Place").click(pick_and_place, [pos_box, approach_box, place_box], outputs=[gr.Image(type="filepath"), gr.Textbox()])
 
 demo.launch(debug=True)

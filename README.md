@@ -11,4 +11,4 @@ pinned: false
 
 Check out the configuration reference at https://huggingface.co/spaces/YashsharmaPhD/PyBullet_Robot_ARM_Simulation
 
-<img width="492" alt="Capture" src="https://github.com/user-attachments/assets/c5927cce-0808-41ee-b9a5-7675c5498324" />
+<img width="600" alt="Capture" src="https://github.com/user-attachments/assets/c5927cce-0808-41ee-b9a5-7675c5498324" />
